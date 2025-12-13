@@ -189,3 +189,10 @@ Contributions are welcome! Please feel free to submit issues, feature requests, 
 [Add contact information here]
 
 # Workflow Test
+
+
+# Docker
+To run the app with Docker:
+```bash
+docker-compose up --build
+```
