@@ -1,0 +1,39 @@
+{
+    "eventVersion": "1.11",
+    "eventTime": "2025-12-08T07:30:00Z",
+    "eventSource": "logs.amazonaws.com",
+    "eventName": "StopLogging",
+    "eventType": "AwsApiCall",
+    "eventID": "test-event-123",
+    "eventCategory": "Management",
+    "managementEvent": true,
+    "readOnly": false,
+    "userIdentity": {
+        "type": "AssumedRole",
+        "principalId": "AROATZAO3D3B7QC5HRCKQ:TestUser",
+        "arn": "arn:aws:sts::259876658883:assumed-role/AdminRole/TestUser",
+        "accountId": "259876658883",
+        "accessKeyId": "ASIATZAO3D3BW4NZ6GK5",
+        "sessionContext": {
+            "sessionIssuer": {
+                "type": "Role",
+                "principalId": "AROATZAO3D3B7QC5HRCKQ",
+                "arn": "arn:aws:iam::259876658883:role/AdminRole",
+                "accountId": "259876658883",
+                "userName": "AdminRole"
+            },
+            "attributes": {
+                "creationDate": "2025-12-08T07:00:00Z",
+                "mfaAuthenticated": false
+            }
+        }
+    },
+    "sourceIPAddress": "203.0.113.42",
+    "userAgent": "aws-cli/2.0.0 Python/3.9.0 Linux/5.10.0",
+    "awsRegion": "us-east-1",
+    "requestParameters": {
+        "trailName": "production-trail"
+    },
+    "responseElements": null,
+    "recipientAccountId": "259876658883"
+}
