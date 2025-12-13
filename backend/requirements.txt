@@ -1,0 +1,29 @@
+# Core Framework
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# Database
+sqlalchemy
+psycopg2-binary
+alembic
+
+# Data Processing
+networkx
+numpy
+
+# HTTP Client for SIEM APIs
+httpx
+
+# Utilities
+python-dotenv
+jmespath
+python-dateutil
+
+# Security
+cryptography
+
+# Testing
+pytest
+pytest-asyncio

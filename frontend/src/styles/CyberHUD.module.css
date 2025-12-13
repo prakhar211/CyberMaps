@@ -1,0 +1,393 @@
+/* ============================================
+   CYBERMAPS V2: NEXT-GEN CYBER WARFARE HUD
+   Deep Black + Electric Neon Theme
+   ============================================ */
+
+:root {
+    /* OLED Deep Black Base */
+    --hud-black: #000000;
+    --hud-void: #050505;
+    --hud-surface: #0a0a0a;
+
+    /* Electric Neon Accents */
+    --neon-crimson: #ff0844;
+    --neon-crimson-glow: rgba(255, 8, 68, 0.6);
+    --neon-cyan: #00f3ff;
+    --neon-cyan-glow: rgba(0, 243, 255, 0.5);
+    --neon-purple: #b026ff;
+    --neon-purple-glow: rgba(176, 38, 255, 0.5);
+
+    /* Wireframe/Glass */
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-bg: rgba(10, 10, 10, 0.7);
+    --glow-thin: 0 0 8px;
+    --glow-medium: 0 0 16px;
+    --glow-intense: 0 0 24px;
+
+    /* Typography */
+    --font-mono: 'JetBrains Mono', 'Roboto Mono', 'Courier New', monospace;
+    --font-tech: 'Rajdhani', 'Inter', sans-serif;
+}
+
+/* ============================================
+   BASE LAYOUT - INFINITE CANVAS
+   ============================================ */
+
+.hudContainer {
+    width: 100vw;
+    height: 100vh;
+    background: var(--hud-black);
+    display: flex;
+    overflow: hidden;
+    position: relative;
+    font-family: var(--font-tech);
+}
+
+/* Animated grid background for depth */
+.hudContainer::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-image:
+        linear-gradient(rgba(0, 243, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 243, 255, 0.03) 1px, transparent 1px);
+    background-size: 50px 50px;
+    pointer-events: none;
+    opacity: 0.3;
+}
+
+/* ============================================
+   COLLAPSIBLE ICON DOCK SIDEBAR
+   ============================================ */
+
+.iconDock {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    width: 60px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border-right: 1px solid var(--glass-border);
+    box-shadow: var(--glow-thin) var(--neon-cyan-glow);
+    z-index: 100;
+    transition: width 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    display: flex;
+    flex-direction: column;
+    padding: 20px 0;
+}
+
+.iconDock.expanded {
+    width: 320px;
+}
+
+.iconDock:hover {
+    border-right-color: var(--neon-cyan);
+    box-shadow: var(--glow-medium) var(--neon-cyan-glow);
+}
+
+/* Logo/Brand */
+.dockLogo {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 60px;
+    margin-bottom: 30px;
+    cursor: pointer;
+    position: relative;
+}
+
+.dockLogo svg {
+    width: 32px;
+    height: 32px;
+    color: var(--neon-cyan);
+    filter: drop-shadow(var(--glow-thin) var(--neon-cyan-glow));
+    transition: all 0.3s ease;
+}
+
+.dockLogo:hover svg {
+    transform: scale(1.1);
+    filter: drop-shadow(var(--glow-medium) var(--neon-cyan-glow));
+}
+
+.dockLogoText {
+    position: absolute;
+    left: 70px;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--neon-cyan);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    white-space: nowrap;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+.iconDock.expanded .dockLogoText {
+    opacity: 1;
+}
+
+/* Dock Icons */
+.dockIcons {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 10px;
+}
+
+.dockIcon {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    cursor: pointer;
+    position: relative;
+    transition: all 0.2s ease;
+    border: 1px solid transparent;
+}
+
+.dockIcon svg {
+    width: 20px;
+    height: 20px;
+    color: rgba(255, 255, 255, 0.5);
+    transition: all 0.2s ease;
+}
+
+.dockIcon:hover {
+    background: rgba(0, 243, 255, 0.1);
+    border-color: var(--neon-cyan);
+    box-shadow: var(--glow-thin) var(--neon-cyan-glow);
+}
+
+.dockIcon:hover svg {
+    color: var(--neon-cyan);
+    transform: scale(1.15);
+}
+
+.dockIcon.active {
+    background: rgba(176, 38, 255, 0.15);
+    border-color: var(--neon-purple);
+    box-shadow: var(--glow-thin) var(--neon-purple-glow);
+}
+
+.dockIcon.active svg {
+    color: var(--neon-purple);
+}
+
+/* Tooltip on hover */
+.dockIcon::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    left: 60px;
+    background: var(--hud-surface);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    border: 1px solid var(--glass-border);
+}
+
+.dockIcon:hover::after {
+    opacity: 1;
+}
+
+/* ============================================
+   MAIN CANVAS - INFINITE BOARD
+   ============================================ */
+
+.mainCanvas {
+    flex: 1;
+    margin-left: 60px;
+    position: relative;
+    transition: margin-left 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.iconDock.expanded~.mainCanvas {
+    margin-left: 320px;
+}
+
+/* ============================================
+   FLOATING ACTION BAR
+   ============================================ */
+
+.floatingActions {
+    position: fixed;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 12px;
+    padding: 12px 20px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    box-shadow: var(--glow-medium) rgba(0, 0, 0, 0.8);
+    z-index: 90;
+    animation: slideUpSpring 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes slideUpSpring {
+    0% {
+        opacity: 0;
+        transform: translateX(-50%) translateY(100px);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+    }
+}
+
+.actionBtn {
+    padding: 12px 24px;
+    background: transparent;
+    border: 1px solid var(--neon-purple);
+    border-radius: 8px;
+    color: var(--neon-purple);
+    font-family: var(--font-tech);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.actionBtn:hover {
+    background: rgba(176, 38, 255, 0.15);
+    box-shadow: var(--glow-thin) var(--neon-purple-glow);
+    transform: translateY(-2px);
+}
+
+.actionBtn:active {
+    transform: translateY(0);
+}
+
+.actionBtn.primary {
+    background: var(--neon-purple);
+    color: black;
+    font-weight: 700;
+}
+
+.actionBtn.primary:hover {
+    box-shadow: var(--glow-medium) var(--neon-purple-glow);
+}
+
+/* ============================================
+   GLASSMORPHIC PANELS
+   ============================================ */
+
+.glassPanel {
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: var(--glow-thin) rgba(0, 0, 0, 0.5);
+}
+
+.glassPanel:hover {
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* ============================================
+   NEON GLOW EFFECTS
+   ============================================ */
+
+.glowCyan {
+    box-shadow: var(--glow-thin) var(--neon-cyan-glow);
+}
+
+.glowCrimson {
+    box-shadow: var(--glow-thin) var(--neon-crimson-glow);
+}
+
+.glowPurple {
+    box-shadow: var(--glow-thin) var(--neon-purple-glow);
+}
+
+/* ============================================
+   THEME TOGGLE (V1/V2 Switch)
+   ============================================ */
+
+.themeToggle {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: 20px;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.themeToggle:hover {
+    border-color: var(--neon-cyan);
+    box-shadow: var(--glow-thin) var(--neon-cyan-glow);
+}
+
+.toggleSwitch {
+    width: 40px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    position: relative;
+    transition: background 0.3s ease;
+}
+
+.toggleSwitch.active {
+    background: var(--neon-purple);
+}
+
+.toggleKnob {
+    width: 16px;
+    height: 16px;
+    background: white;
+    border-radius: 50%;
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.toggleSwitch.active .toggleKnob {
+    transform: translateX(20px);
+}
+
+/* ============================================
+   MONOSPACE DATA DISPLAY
+   ============================================ */
+
+.dataText {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--neon-cyan);
+    letter-spacing: 0.5px;
+}
+
+.criticalText {
+    color: var(--neon-crimson);
+    font-weight: 600;
+}
