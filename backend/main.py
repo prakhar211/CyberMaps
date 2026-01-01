@@ -233,7 +233,7 @@ def create_alert(alert: Alert, repo: AlertRepository = Depends(get_repository)):
     return repo.create_alert(alert_dict)
 
 @app.post("/predict", response_model=PredictionResponse)
-async def predict_next_step(request: PredictionRequest, db: Session = Depends(get_db)):
+async def predict_next_step(request: PredictionRequest, repo: AlertRepository = Depends(get_repository)):
     # Handle multi-tactic strings - extract first tactic for validation
     current_tactic = request.current_tactic
     if ',' in current_tactic:
@@ -259,12 +259,26 @@ async def predict_next_step(request: PredictionRequest, db: Session = Depends(ge
     # If investigation_id is present, we try to enrich the TOP result with AI
     ai_context = None
     if request.investigation_id:
-        inv = db.query(models.InvestigationModel).filter(models.InvestigationModel.id == request.investigation_id).first()
+        inv = repo.get_investigation_by_id(request.investigation_id)
         if inv and inv.alert_ids:
              # Fetch alerts
-             alerts = db.query(models.AlertModel).filter(models.AlertModel.id.in_(inv.alert_ids)).all()
+             alerts = repo.get_alerts_by_ids(inv.alert_ids)
+             
+             # helper to safely get attr or key
+             def get_attr(obj, attr, default=None):
+                 if isinstance(obj, dict): return obj.get(attr, default)
+                 return getattr(obj, attr, default)
+
              # Convert to dicts
-             ai_context = [Alert.model_validate(a).model_dump() for a in alerts]
+             ai_context = []
+             for a in alerts:
+                 if hasattr(a, "model_dump"):
+                    ai_context.append(a.model_dump())
+                 elif hasattr(a, "__dict__"):
+                    d = {k:v for k,v in a.__dict__.items() if not k.startswith('_')}
+                    ai_context.append(d)
+                 else:
+                    ai_context.append(a)
     
     for i, p in enumerate(predictions):
         tactic_name = p[0]
