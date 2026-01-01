@@ -412,13 +412,31 @@ def health_check():
 
 
 @app.post("/correlate", response_model=Investigation)
-def correlate_investigation(request: InvestigationRequest, db: Session = Depends(get_db)):
-    # Find alerts from DB
-    selected_alerts = db.query(models.AlertModel).filter(models.AlertModel.id.in_(request.alert_ids)).all()
+def correlate_investigation(request: InvestigationRequest, repo: AlertRepository = Depends(get_repository)):
+    # Find alerts from Repo
+    # Repo returns objects (AlertModel or MockAlert). We need to support property access.
+    selected_alerts = repo.get_alerts_by_ids(request.alert_ids)
     
-    # Convert Pydantic models to dicts for our correlation logic
-    alerts_dicts = [Alert.model_validate(a).model_dump() for a in selected_alerts]
+    # helper to safely get attr or key
+    def get_attr(obj, attr, default=None):
+        if isinstance(obj, dict): return obj.get(attr, default)
+        return getattr(obj, attr, default)
     
+    # Convert objects to dicts for GraphBuilder
+    alerts_dicts = []
+    for a in selected_alerts:
+        # Check if it has .model_dump() (Pydantic/SQLAlchemy mixed) or need manual conversion
+        if hasattr(a, "model_dump"):
+             alerts_dicts.append(a.model_dump())
+        elif hasattr(a, "__dict__"):
+             # For MockAlert or simple objects
+             # Filter out private/internal attrs
+             d = {k:v for k,v in a.__dict__.items() if not k.startswith('_')}
+             alerts_dicts.append(d)
+        else:
+             # Fallback
+             alerts_dicts.append(a)
+
     # Count operational events before correlation
     operational_events = [a for a in alerts_dicts if a.get("tactic") == "Unknown"]
     
@@ -434,69 +452,75 @@ def correlate_investigation(request: InvestigationRequest, db: Session = Depends
             "operational_event_names": [e.get("name") for e in operational_events]
         }
     
-    # Create and Save Investigation
-    new_investigation = models.InvestigationModel(
-        id=str(uuid.uuid4()),
-        name=request.name,
-        created_at=datetime.now(),
-        alert_ids=request.alert_ids, # SQLA JSON handles list
-        graph=graph_data             # SQLA JSON handles dict
-    )
-    db.add(new_investigation)
-    db.commit()
-    db.refresh(new_investigation)
+    # Create and Save Investigation via Repo
+    inv_data = {
+        "name": request.name,
+        "alert_ids": request.alert_ids,
+        "graph": graph_data
+    }
+    new_investigation = repo.create_investigation(inv_data)
     
     return new_investigation
 
 @app.get("/investigations", response_model=List[Investigation])
-def get_investigations(db: Session = Depends(get_db)):
-    return db.query(models.InvestigationModel).all()
+def get_investigations(repo: AlertRepository = Depends(get_repository)):
+    return repo.get_investigations()
 
 @app.get("/investigations/{investigation_id}", response_model=Investigation)
-def get_investigation(investigation_id: str, db: Session = Depends(get_db)):
-    inv = db.query(models.InvestigationModel).filter(models.InvestigationModel.id == investigation_id).first()
+def get_investigation(investigation_id: str, repo: AlertRepository = Depends(get_repository)):
+    inv = repo.get_investigation_by_id(investigation_id)
     if not inv:
         raise HTTPException(status_code=404, detail="Investigation not found")
     return inv
 
 @app.delete("/investigations/{investigation_id}")
-def delete_investigation(investigation_id: str, db: Session = Depends(get_db)):
-    inv = db.query(models.InvestigationModel).filter(models.InvestigationModel.id == investigation_id).first()
-    if not inv:
-        raise HTTPException(status_code=404, detail="Investigation not found")
-    
-    db.delete(inv)
-    db.commit()
-    
+def delete_investigation(investigation_id: str, repo: AlertRepository = Depends(get_repository)):
+    repo.delete_investigation(investigation_id)
     return {"status": "success", "message": "Investigation deleted"}
 
 @app.put("/investigations/{investigation_id}/alerts")
-def append_alerts_to_investigation(investigation_id: str, request: AppendAlertsRequest, db: Session = Depends(get_db)):
+def append_alerts_to_investigation(investigation_id: str, request: AppendAlertsRequest, repo: AlertRepository = Depends(get_repository)):
     # Find investigation
-    investigation = db.query(models.InvestigationModel).filter(models.InvestigationModel.id == investigation_id).first()
+    investigation = repo.get_investigation_by_id(investigation_id)
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
     
     # Update alert list (deduplicate)
     current_ids = set(investigation.alert_ids or [])
     new_ids = set(request.alert_ids)
-    updated_ids = list(current_ids.union(new_ids))
+    new_alert_ids = list(set(investigation.alert_ids + request.alert_ids))
     
-    # Re-run correlation
-    all_alerts = db.query(models.AlertModel).filter(models.AlertModel.id.in_(updated_ids)).all()
-    alerts_dicts = [Alert.model_validate(a).model_dump() for a in all_alerts]
+    # Fetch all alerts to rebuild graph
+    all_alerts = repo.get_alerts_by_ids(new_alert_ids)
     
-    # Update Graph and IDs
-    investigation.graph = GraphBuilder.build_graph(alerts_dicts)
-    investigation.alert_ids = updated_ids
+     # helper to safely get attr or key
+    def get_attr(obj, attr, default=None):
+        if isinstance(obj, dict): return obj.get(attr, default)
+        return getattr(obj, attr, default)
     
-    # JSON columns often require explicit "flag_modified" in some ORMs, 
-    # but reassigning the whole list/dict usually works in SA.
-    # To be safe, we can manually flag if needed, but simple assignment usually detects change.
+    # Convert objects to dicts for GraphBuilder
+    alerts_dicts = []
+    for a in all_alerts:
+        if hasattr(a, "model_dump"):
+             alerts_dicts.append(a.model_dump())
+        elif hasattr(a, "__dict__"):
+             d = {k:v for k,v in a.__dict__.items() if not k.startswith('_')}
+             alerts_dicts.append(d)
+        else:
+             alerts_dicts.append(a)
+
+    alerts_dicts = [a for a in alerts_dicts if isinstance(a, dict)] # Ensure only dicts
+
+    # Rebuild Graph
+    graph_data = GraphBuilder.build_graph(alerts_dicts)
     
-    db.commit()
-    db.refresh(investigation)
-        
+    # Update Repo with new IDs AND new Graph
+    repo.update_investigation(investigation_id, alert_ids=new_alert_ids, graph=graph_data)
+    
+    # Refresh object in local var (though usually repo returns it)
+    investigation.alert_ids = new_alert_ids
+    investigation.graph = graph_data
+    
     return investigation
 
 @app.get("/investigations/{investigation_id}/summary")

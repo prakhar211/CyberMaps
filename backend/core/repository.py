@@ -31,6 +31,27 @@ class AlertRepository(ABC):
     def get_alerts_by_ids(self, alert_ids: List[str]) -> List[Any]:
         pass
 
+    # Investigation methods
+    @abstractmethod
+    def create_investigation(self, data: Dict[str, Any]) -> Any:
+        pass
+    
+    @abstractmethod
+    def get_investigations(self) -> List[Any]:
+        pass
+    
+    @abstractmethod
+    def get_investigation_by_id(self, inv_id: str) -> Optional[Any]:
+        pass
+    
+    @abstractmethod
+    def delete_investigation(self, inv_id: str) -> None:
+        pass
+        
+    @abstractmethod
+    def update_investigation(self, inv_id: str, alert_ids: Optional[List[str]] = None, graph: Optional[Dict[str, Any]] = None) -> Optional[Any]:
+        pass
+
 class SqliteAlertRepository(AlertRepository):
     def __init__(self, db: Session):
         self.db = db
@@ -75,6 +96,42 @@ class SqliteAlertRepository(AlertRepository):
     def get_alerts_by_ids(self, alert_ids: List[str]) -> List[Any]:
         return self.db.query(models.AlertModel).filter(models.AlertModel.id.in_(alert_ids)).all()
 
+    def create_investigation(self, data: Dict[str, Any]) -> Any:
+        new_inv = models.InvestigationModel(
+            id=data.get("id") or str(uuid.uuid4()),
+            name=data["name"],
+            created_at=datetime.utcnow(),
+            alert_ids=data["alert_ids"],
+            graph=data["graph"]
+        )
+        self.db.add(new_inv)
+        self.db.commit()
+        self.db.refresh(new_inv)
+        return new_inv
+
+    def get_investigations(self) -> List[Any]:
+        return self.db.query(models.InvestigationModel).all()
+
+    def get_investigation_by_id(self, inv_id: str) -> Optional[Any]:
+        return self.db.query(models.InvestigationModel).filter(models.InvestigationModel.id == inv_id).first()
+
+    def delete_investigation(self, inv_id: str) -> None:
+        inv = self.get_investigation_by_id(inv_id)
+        if inv:
+            self.db.delete(inv)
+            self.db.commit()
+
+    def update_investigation(self, inv_id: str, alert_ids: Optional[List[str]] = None, graph: Optional[Dict[str, Any]] = None) -> Optional[Any]:
+        inv = self.get_investigation_by_id(inv_id)
+        if inv:
+            if alert_ids is not None:
+                inv.alert_ids = alert_ids
+            if graph is not None:
+                inv.graph = graph
+            self.db.commit()
+            self.db.refresh(inv)
+        return inv
+
 class InMemoryAlertRepository(AlertRepository):
     def __init__(self):
         # In a real per-request scenario, this might need to be context-var based or session-based.
@@ -83,6 +140,7 @@ class InMemoryAlertRepository(AlertRepository):
         # To make it truly per-session, we'd need dependency injection with session handling.
         # For the prototype roadmap, we proceed with simple list, but note the limitation.
         self._alerts = []
+        self._investigations = []
 
     def create_alert(self, alert_data: Dict[str, Any]) -> Any:
         # Simulate an object with attribute access to mimic ORM model
@@ -116,3 +174,39 @@ class InMemoryAlertRepository(AlertRepository):
         
     def get_alerts_by_ids(self, alert_ids: List[str]) -> List[Any]:
         return [a for a in self._alerts if a.id in alert_ids]
+
+    def create_investigation(self, data: Dict[str, Any]) -> Any:
+        class MockInvestigation:
+            def __init__(self, **entries):
+                self.__dict__.update(entries)
+        
+        new_inv = MockInvestigation(
+            id=data.get("id") or str(uuid.uuid4()),
+            name=data["name"],
+            created_at=datetime.utcnow(),
+            alert_ids=data["alert_ids"],
+            graph=data["graph"]
+        )
+        self._investigations.append(new_inv)
+        return new_inv
+
+    def get_investigations(self) -> List[Any]:
+        return self._investigations
+
+    def get_investigation_by_id(self, inv_id: str) -> Optional[Any]:
+        for inv in self._investigations:
+            if inv.id == inv_id:
+                return inv
+        return None
+
+    def delete_investigation(self, inv_id: str) -> None:
+        self._investigations = [i for i in self._investigations if i.id != inv_id]
+
+    def update_investigation(self, inv_id: str, alert_ids: Optional[List[str]] = None, graph: Optional[Dict[str, Any]] = None) -> Optional[Any]:
+        inv = self.get_investigation_by_id(inv_id)
+        if inv:
+            if alert_ids is not None:
+                inv.alert_ids = alert_ids
+            if graph is not None:
+                inv.graph = graph
+        return inv
