@@ -1,3 +1,4 @@
+from typing import Generator
 from fastapi import Depends, Header
 from sqlalchemy.orm import Session
 from database import SessionLocal
