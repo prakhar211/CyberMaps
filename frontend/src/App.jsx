@@ -30,6 +30,7 @@ import styles from './styles/CyberHUD.module.css';
 import { getLayoutedElements } from './utils/layout';
 import { collectPastIOCs, generatePredictionData } from './utils/iocCollector';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 // Custom Node Types
 const nodeTypes = {
@@ -135,7 +136,7 @@ function CyberMapsApp() {
         let tactic = label.split(':')[0].trim();
 
         if (tactic) {
-          axios.get(`http://localhost:8000/tactic/${tactic}`)
+          axios.get(`${API_BASE_URL}/tactic/${tactic}`)
             .then(res => setTacticInfo(res.data))
             .catch(() => setTacticInfo(null));
         }
@@ -153,13 +154,13 @@ function CyberMapsApp() {
 
 
   const fetchAlerts = () => {
-    axios.get('http://localhost:8000/alerts')
+    axios.get(`${API_BASE_URL}/alerts`)
       .then(res => setAlerts(res.data))
       .catch(err => console.error("Failed to fetch alerts:", err));
   };
 
   const fetchInvestigations = () => {
-    axios.get('http://localhost:8000/investigations')
+    axios.get(`${API_BASE_URL}/investigations`)
       .then(res => {
         setInvestigations(res.data);
       })
@@ -202,7 +203,7 @@ function CyberMapsApp() {
     setInvestigationSummary(null);
     setShowInvestigationSummary(false);
 
-    axios.get(`http://localhost:8000/investigations/${inv.id}/summary`)
+    axios.get(`${API_BASE_URL}/investigations/${inv.id}/summary`)
       .then(res => {
         setInvestigationSummary(res.data);
       })
@@ -258,7 +259,7 @@ function CyberMapsApp() {
     setPredicting(true);
 
     try {
-      const res = await axios.post('http://localhost:8000/correlate', {
+      const res = await axios.post(`${API_BASE_URL}/correlate`, {
         name: name,
         alert_ids: Array.from(selectedAlerts)
       });
@@ -293,7 +294,7 @@ function CyberMapsApp() {
     if (!targetInvId) return;
 
     try {
-      const res = await axios.put(`http://localhost:8000/investigations/${targetInvId}/alerts`, {
+      const res = await axios.put(`${API_BASE_URL}/investigations/${targetInvId}/alerts`, {
         alert_ids: Array.from(selectedAlerts)
       });
 
@@ -386,7 +387,7 @@ function CyberMapsApp() {
 
     setPredicting(true);
     try {
-      const res = await axios.post('http://localhost:8000/predict', {
+      const res = await axios.post(`${API_BASE_URL}/predict`, {
         current_tactic: currentTactic,
         n_steps: 1,
         investigation_id: currentInvestigation?.id
@@ -491,7 +492,7 @@ function CyberMapsApp() {
         handleGoHome();
       }
 
-      await axios.delete(`http://localhost:8000/investigations/${id}`);
+      await axios.delete(`${API_BASE_URL}/investigations/${id}`);
     } catch (err) {
       console.error("Failed to delete investigation:", err);
       fetchInvestigations();

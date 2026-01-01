@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { X, ShieldPlus } from 'lucide-react';
 import axios from 'axios';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
 const TACTICS = [
     "Reconnaissance", "Resource Development", "Initial Access", "Execution",
     "Persistence", "Privilege Escalation", "Defense Evasion", "Credential Access",
@@ -47,7 +49,7 @@ function AddAlertModal({ onClose, onAlertAdded }) {
                 technique: "Manual Entry",
                 raw_data: rawDataJson
             };
-            const res = await axios.post('http://localhost:8000/alerts', newAlert);
+            const res = await axios.post(`${API_BASE_URL}/alerts`, newAlert);
             onAlertAdded(res.data);
             onClose();
         } catch (err) {
