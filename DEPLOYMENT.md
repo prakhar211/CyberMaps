@@ -35,12 +35,16 @@ This is the recommended deployment for SOC/IR teams. It runs entirely within you
 ## 2. Web Playground (Vercel/Netlify)
 This is a stateless version for demonstrations and community trial.
 
-### Backend (Railway/Render)
-Since the backend requires Python, it must be hosted on a service like Railway, Render, or equivalent.
-1. Connect your repo to Render.
-2. Set Root Directory to `backend/`.
-3. Set Build Command: `pip install -r requirements.txt`
-4. Set Start Command: `uvicorn main:app --host 0.0.0.0 --port 10000`
+### Backend (Render Blueprint - Recommended)
+The repository includes a `render.yaml` Blueprint for automatic configuration.
+
+1. Create a new **Blueprint** on Render.
+2. Connect your GitHub repository.
+3. Render will auto-detect `render.yaml` and configure the service as `cybermaps-backend`.
+4. Click **Apply**.
+5. Once deployed, copy your Backend URL (e.g., `https://cybermaps-backend.onrender.com`).
+
+**Note:** Ensure to set your `GOOGLE_API_KEY` in the Render environment variables dashboard if you want AI features enabled.
 
 ### Frontend (Vercel)
 1. Connect your repo to Vercel.

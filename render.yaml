@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: cybermaps-backend
+    env: python
+    rootDirectory: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: CYBERMAPS_MODE
+        value: playground
+      - key: GOOGLE_API_KEY
+        sync: false
