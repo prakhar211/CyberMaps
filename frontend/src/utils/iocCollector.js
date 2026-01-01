@@ -144,13 +144,14 @@ export function generatePredictionData(node, contextIOCs) {
     // Extract tactic name (remove probability part)
     const tactic = label.replace(/\s*\(\d+%\)/, '').trim();
 
+    // Prefer AI-generated content if available in node.data
     return {
         tactic,
         probability,
-        description: `Adversary may attempt to execute ${tactic.toLowerCase()} techniques based on observed attack patterns.`,
-        huntingQueries: getHuntingQueries(tactic),
-        detectionRules: getDetectionRules(tactic),
-        contextIOCs
+        description: node.data.description || `Adversary may attempt to execute ${tactic.toLowerCase()} techniques based on observed attack patterns.`,
+        huntingQueries: node.data.huntingQueries || getHuntingQueries(tactic),
+        detectionRules: node.data.detectionRules || getDetectionRules(tactic),
+        contextIOCs: node.data.contextIOCs || contextIOCs // AI context IOCs might be better than backward traversal
     };
 }
 

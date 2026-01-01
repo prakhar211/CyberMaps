@@ -21,6 +21,9 @@ from schemas.unified_alert import (
 )
 
 
+from connectors.registry import ConnectorRegistry
+
+@ConnectorRegistry.register("coralogix")
 class CoralogixConnector(BaseSIEMConnector):
     """
     Coralogix webhook connector
@@ -42,14 +45,21 @@ class CoralogixConnector(BaseSIEMConnector):
     async def validate_webhook_signature(
         self, 
         headers: Dict[str, str], 
-        body: bytes
+        body: bytes,
+        query_params: Dict[str, str] = None
     ) -> bool:
         """
-        Validate Coralogix webhook signature
+        Validate Coralogix webhook request
+        
+        Supports:
+        1. API Key in Query Param (?api_key=...)
+        2. API Key in Header (X-CyberMaps-API-Key)
+        3. HMAC Signature (Legacy/Future proofing)
         
         Args:
             headers: HTTP headers
             body: Raw request body
+            query_params: URL query parameters (Optional)
             
         Returns:
             bool: True if valid (or no secret configured)
@@ -57,22 +67,35 @@ class CoralogixConnector(BaseSIEMConnector):
         if not self.webhook_secret:
             # No secret configured, skip validation (development mode)
             return True
+            
+        # 1. Check Query Parameter (Easiest for Generic Webhooks)
+        if query_params:
+            api_key = query_params.get("api_key")
+            if api_key and api_key == self.webhook_secret:
+                return True
+                
+        # 2. Check Custom Header
+        api_key_header = headers.get("x-cybermaps-api-key") or headers.get("X-CyberMaps-API-Key")
+        if api_key_header and api_key_header == self.webhook_secret:
+            return True
         
-        # Check for signature header (Coralogix may use different header names)
+        # 3. Check HMAC Signature (Legacy/Advanced)
+        # Coralogix may use different header names if they add signing later
         signature_header = headers.get("X-Coralogix-Signature") or headers.get("X-Hub-Signature-256")
         
-        if not signature_header:
-            return False
-        
-        # Compute expected signature
-        expected_signature = hmac.new(
-            self.webhook_secret.encode(),
-            body,
-            hashlib.sha256
-        ).hexdigest()
-        
-        # Compare signatures (constant-time comparison)
-        return hmac.compare_digest(signature_header, f"sha256={expected_signature}")
+        if signature_header:
+            # Compute expected signature
+            expected_signature = hmac.new(
+                self.webhook_secret.encode(),
+                body,
+                hashlib.sha256
+            ).hexdigest()
+            
+            # Compare signatures (constant-time comparison)
+            if hmac.compare_digest(signature_header, f"sha256={expected_signature}"):
+                return True
+                
+        return False
     
     def normalize_alert(self, raw_alert: Dict[str, Any]) -> UnifiedAlert:
         """
@@ -120,11 +143,18 @@ class CoralogixConnector(BaseSIEMConnector):
         mitre_techniques = []
         
         tags = alert_data.get("tags", [])
+        # Handle case where tags is a string (comma separated)
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.split(",")]
+            
         for tag in tags:
             if tag.startswith("mitre_tactic:"):
                 mitre_tactics.append(tag.replace("mitre_tactic:", ""))
             elif tag.startswith("mitre_technique:"):
                 mitre_techniques.append(tag.replace("mitre_technique:", ""))
+        
+        # Check if severity is mapped in fields
+        severity = alert_data.get("severity", "Medium")
         
         # Fallback: Infer MITRE from event if not present
         if not mitre_tactics and "eventName" in metadata:

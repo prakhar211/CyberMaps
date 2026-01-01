@@ -388,7 +388,8 @@ function CyberMapsApp() {
     try {
       const res = await axios.post('http://localhost:8000/predict', {
         current_tactic: currentTactic,
-        n_steps: 1
+        n_steps: 1,
+        investigation_id: currentInvestigation?.id
       });
 
       const predictions = res.data.next_tactics;
@@ -423,7 +424,11 @@ function CyberMapsApp() {
           data: {
             label: `${pred.tactic} (${(pred.probability * 100).toFixed(0)}%)`,
             icon: targetIcon,
-            status: 'target'
+            status: 'target',
+            huntingQueries: pred.huntingQueries,
+            detectionRules: pred.detectionRules,
+            description: pred.description,
+            contextIOCs: pred.contextIOCs
           },
           position: { x: 0, y: 0 } // Function will calculate this
         });
@@ -555,13 +560,25 @@ function CyberMapsApp() {
                 <ShieldAlert color="var(--primary)" size={28} />
                 <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 600, color: 'var(--text-primary)' }}>CyberMaps</h2>
               </div>
-              <button
-                className="btn-ghost btn-sm"
-                onClick={() => setIsSidebarCollapsed(true)}
-                title="Collapse sidebar"
-              >
-                <ChevronLeft size={18} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <a
+                  href="https://github.com/yourusername/CyberMaps"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="btn-ghost btn-xs"
+                  title="Download Docker Version"
+                  style={{ color: '#00f3ff', textDecoration: 'none', border: '1px solid #00f3ff', borderRadius: '4px', padding: '2px 6px', fontSize: '0.7rem' }}
+                >
+                  GET LOCAL
+                </a>
+                <button
+                  className="btn-ghost btn-sm"
+                  onClick={() => setIsSidebarCollapsed(true)}
+                  title="Collapse sidebar"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+              </div>
             </div>
           </>
         )}
@@ -896,7 +913,7 @@ function CyberMapsApp() {
         <PredictionDrawer
           isOpen={showPredictionDrawer}
           onClose={() => setShowPredictionDrawer(false)}
-          data={predictionData}
+          predictionData={predictionData}
         />
       </div>
 

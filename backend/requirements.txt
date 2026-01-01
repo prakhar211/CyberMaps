@@ -4,6 +4,12 @@ uvicorn[standard]
 pydantic
 pydantic-settings
 
+# AI Dependencies
+langchain
+langchain-openai
+langchain-google-genai
+openai
+
 # Database
 sqlalchemy
 psycopg2-binary

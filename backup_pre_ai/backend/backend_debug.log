@@ -1,0 +1,7 @@
+GET investigations. DB Size: 0
+GET investigations. DB Size: 0
+received correlate request: name='Final Verification' alert_ids=['a1']
+selected_alerts count: 1
+graph_data nodes: 1
+Appended investigation. DB Size: 1
+GET investigations. DB Size: 1

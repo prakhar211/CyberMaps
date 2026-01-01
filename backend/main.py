@@ -3,29 +3,27 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 from typing import List, Dict, Optional, Any
 import networkx as nx
-from markov import predictor, TACTICS
+from core.prediction import predictor, TACTICS
+from core.repository import AlertRepository
+from core.engine import GraphBuilder
+
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine
 import models
 import uuid
 from datetime import datetime
-from correlation import correlate_alerts
 
+from core.deps import get_db, get_repository
+
+from ai_engine import ai_engine
 # Import webhook router
 from routers.webhooks import router as webhooks_router
+from routers.simulation import router as simulation_router
 
 # Create Tables
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="AI Attack Path Predictor", version="1.0.0")
-
-# Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # CORS setup
 origins = [
@@ -41,8 +39,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register webhook router
+# Register routers
 app.include_router(webhooks_router)
+app.include_router(simulation_router)
 
 
 # --- Pydantic Models ---
@@ -67,11 +66,17 @@ class Alert(AlertBase):
 class PredictionRequest(BaseModel):
     current_tactic: str
     n_steps: int = 1
+    investigation_id: Optional[str] = None # Added for Context
 
 class PredictionItem(BaseModel):
     tactic: str
     probability: float
     target_layer: Optional[str] = None
+    # AI Enriched Fields
+    huntingQueries: Optional[List[Dict[str, str]]] = None
+    detectionRules: Optional[List[Dict[str, str]]] = None
+    description: Optional[str] = None
+    contextIOCs: Optional[List[Dict[str, str]]] = None
 
 class PredictionResponse(BaseModel):
     next_tactics: List[PredictionItem]
@@ -114,7 +119,7 @@ with SessionLocal() as db:
 @app.get("/alerts", response_model=List[Alert])
 def get_alerts(
     time_filter: Optional[str] = None,  # "30m", "1h", "24h", "7d", "all"
-    db: Session = Depends(get_db)
+    repo: AlertRepository = Depends(get_repository)
 ):
     """
     Get alerts with optional time-based filtering
@@ -122,26 +127,7 @@ def get_alerts(
     Args:
         time_filter: Time range filter - "30m", "1h", "24h", "7d", or "all" (default)
     """
-    from datetime import timedelta
-    
-    query = db.query(models.AlertModel)
-    
-    # Apply time filter
-    if time_filter and time_filter != "all":
-        now = datetime.utcnow()
-        time_delta_map = {
-            "30m": timedelta(minutes=30),
-            "1h": timedelta(hours=1),
-            "24h": timedelta(hours=24),
-            "7d": timedelta(days=7),
-        }
-        
-        if time_filter in time_delta_map:
-            cutoff_time = now - time_delta_map[time_filter]
-            query = query.filter(models.AlertModel.created_at >= cutoff_time)
-    
-    # Order by most recent first
-    return query.order_by(models.AlertModel.created_at.desc()).all()
+    return repo.get_alerts(time_filter)
 
 def validate_tactic(tactic_string: str) -> tuple:
     """
@@ -166,7 +152,7 @@ def validate_tactic(tactic_string: str) -> tuple:
     return True, ""
 
 @app.post("/alerts", response_model=Alert)
-def create_alert(alert: Alert, db: Session = Depends(get_db)):
+def create_alert(alert: Alert, repo: AlertRepository = Depends(get_repository)):
     # Validate tactic before creating alert
     is_valid, error_msg = validate_tactic(alert.tactic)
     if not is_valid:
@@ -238,22 +224,15 @@ def create_alert(alert: Alert, db: Session = Depends(get_db)):
                  # Let's pretend it's an instance for better visualization if it looks like a host.
                  raw_data_final["requestParameters"] = {"instanceId": resource}
 
-    db_alert = models.AlertModel(
-        id=alert_id,
-        name=alert.name,
-        severity=alert.severity,
-        tactic=alert.tactic,
-        technique=alert.technique,
-        description=alert.description,
-        raw_data=raw_data_final
-    )
-    db.add(db_alert)
-    db.commit()
-    db.refresh(db_alert)
-    return db_alert
+    # Use Repository to create alert
+    alert_dict = alert.model_dump()
+    alert_dict['id'] = alert_id
+    alert_dict['raw_data'] = raw_data_final
+    
+    return repo.create_alert(alert_dict)
 
 @app.post("/predict", response_model=PredictionResponse)
-def predict_next_step(request: PredictionRequest):
+async def predict_next_step(request: PredictionRequest, db: Session = Depends(get_db)):
     # Handle multi-tactic strings - extract first tactic for validation
     current_tactic = request.current_tactic
     if ',' in current_tactic:
@@ -274,78 +253,130 @@ def predict_next_step(request: PredictionRequest):
         return None
 
     # Format for response
-    formatted = [{"tactic": p[0], "probability": p[1], "target_layer": get_target_layer(p[0])} for p in predictions]
-    return PredictionResponse(next_tactics=formatted)
+    formatted_items = []
+    
+    # If investigation_id is present, we try to enrich the TOP result with AI
+    ai_context = None
+    if request.investigation_id:
+        inv = db.query(models.InvestigationModel).filter(models.InvestigationModel.id == request.investigation_id).first()
+        if inv and inv.alert_ids:
+             # Fetch alerts
+             alerts = db.query(models.AlertModel).filter(models.AlertModel.id.in_(inv.alert_ids)).all()
+             # Convert to dicts
+             ai_context = [Alert.model_validate(a).model_dump() for a in alerts]
+    
+    for i, p in enumerate(predictions):
+        tactic_name = p[0]
+        prob = p[1]
+        
+        item = PredictionItem(
+            tactic=tactic_name,
+            probability=prob,
+            target_layer=get_target_layer(tactic_name)
+        )
+        
+        # Only enrich the top-most prediction (index 0) to save time/cost
+        if i == 0 and ai_context:
+            intel = await ai_engine.generate_hunting_intel(
+                current_tactic=request.current_tactic,
+                predicted_tactic=tactic_name,
+                alerts_context=ai_context
+            )
+            
+            # Map valid fields
+            if intel:
+                item.huntingQueries = intel.get("huntingQueries")
+                item.detectionRules = intel.get("detectionRules")
+                item.description = intel.get("description")
+                item.contextIOCs = intel.get("contextIOCs")
+
+        formatted_items.append(item)
+
+    return PredictionResponse(next_tactics=formatted_items)
 
 # Mock Threat Intel Data (Static)
 TACTIC_INFO = {
     "Reconnaissance": {
         "description": "The adversary is trying to gather information they can use to plan future operations.",
+        "impact": "Information gathered can be used to identify vulnerabilities and target critical systems.",
         "mitigation": "Limit information exposed in public facing systems. Monitor logs for scanning activity.",
         "logs": ["Web Server Access Logs", "Firewall Allow/Deny Logs", "DNS Query Logs"]
     },
     "Resource Development": {
         "description": "The adversary is trying to establish resources they can use to support operations.",
+        "impact": "Adversaries may use these resources to launch attacks, store stolen data, or command compromised systems.",
         "mitigation": "Monitor for newly registered domains and compromised accounts.",
         "logs": ["Domain Registration Records", "SSL Certificate Logs", "Threat Intel Feeds"]
     },
     "Initial Access": {
         "description": "The adversary is trying to get into your network.",
+        "impact": "Successful access allows the adversary to execute code and potentially move laterally within the network.",
         "mitigation": "Enforce MFA, patch vulnerability facing internet, and train users against phishing.",
         "logs": ["Email Gateway Logs", "VPN Login Logs", "Web Server Error Logs", "Failed Auth Events"]
     },
     "Execution": {
         "description": "The adversary is trying to run malicious code.",
+        "impact": "Malicious code execution is often a precursor to further malicious activities such as persistence or data theft.",
         "mitigation": "Use application allowlisting (AppLocker) and Endpoint Detection & Response (EDR).",
         "logs": ["Sysmon Event ID 1 (Process Create)", "PowerShell Script Block Logging", "Windows Event ID 4688"]
     },
     "Persistence": {
         "description": "The adversary is trying to maintain their foothold.",
+        "impact": "Allows the adversary to retain access even if credentials are changed or systems are restarted.",
         "mitigation": "Monitor for changes to scheduled tasks, startup folders, and registry keys.",
         "logs": ["Registry Event Logs", "Scheduled Task Logs (Event ID 4698)", "Startup Folder Monitoring"]
     },
     "Privilege Escalation": {
         "description": "The adversary is trying to gain higher-level permissions.",
+        "impact": "Higher privileges enable the adversary to access restricted data and control critical system functions.",
         "mitigation": "Audit user permissions and enforce principle of least privilege.",
         "logs": ["Windows Event ID 4672 (Admin Logon)", "Sudo Usage Logs", "User Group Modification Logs"]
     },
     "Defense Evasion": {
         "description": "The adversary is trying to avoid being detected.",
+        "impact": "Hides malicious activity, making detection and response more difficult and delaying remediation.",
         "mitigation": "Monitor for disabling of security tools and clearing of event logs.",
         "logs": ["Windows Event ID 1102 (Log Clear)", "Antivirus Alert Logs", "Sysmon Event ID 7 (Image Load)"]
     },
     "Credential Access": {
         "description": "The adversary is trying to steal account names and passwords.",
+        "impact": "Stolen credentials provided legitimate-looking access to systems, data, and resources.",
         "mitigation": "Monitor for LSASS dumping and unusual login patterns.",
         "logs": ["Windows Event ID 4624 (Logon)", "LSASS Access Logs (Sysmon ID 10)", "Kerberos Ticket Logs"]
     },
     "Discovery": {
         "description": "The adversary is trying to figure out your environment.",
+        "impact": "Provides the adversary with knowledge of the network topology, systems, and sensitive data locations.",
         "mitigation": "Monitor for network scanning and enumeration commands.",
         "logs": ["Process Execution Logs (net.exe, whoami)", "Network Flow Logs", "DNS Reverse Lookups"]
     },
     "Lateral Movement": {
         "description": "The adversary is trying to move through your environment.",
+        "impact": "Expands the scope of the compromise to additional systems, increasing the potential for damage.",
         "mitigation": "Segment networks and monitor for RDP/SMB usage between workstations.",
         "logs": ["RDP Login Logs (Event ID 4624 Type 10)", "SMB Session Logs", "PsExec Execution Logs"]
     },
     "Collection": {
         "description": "The adversary is trying to gather data of interest to their goal.",
+        "impact": "Sensitive data is gathered and staged for potential exfiltration, leading to data loss/breach.",
         "mitigation": "Encrypt sensitive data at rest and monitor for mass file access.",
         "logs": ["File Access Logs (Audit Object Access)", "Database Query Logs", "SharePoint Access Logs"]
     },
     "Command and Control": {
         "description": "The adversary is trying to communicate with compromised systems to control them.",
+        "impact": "Allows the adversary to remotely control compromised systems and exfiltrate data.",
         "mitigation": "Block known C2 domains and monitor for beaconing traffic.",
         "logs": ["Proxy Logs", "Firewall Traffic Logs", "DNS Request Logs"]
     },
     "Exfiltration": {
         "description": "The adversary is trying to steal data.",
+        "impact": "Results in the unauthorized transfer of sensitive data out of the network, causing financial and reputational damage.",
         "mitigation": "Monitor for large data transfers out of the network.",
         "logs": ["DLP Alerts", "FTP/SCP Transfer Logs", "Cloud Storage Upload Logs"]
     },
     "Impact": {
         "description": "The adversary is trying to manipulate, interrupt, or destroy your systems and data.",
+        "impact": "Destruction or manipulation of data and systems can cause significant operational disruption.",
         "mitigation": "Maintain offline backups and disaster recovery plans.",
         "logs": ["System Availability Logs", "Backup Integrity Logs", "Disk Wiping Alerts"]
     }
@@ -391,7 +422,7 @@ def correlate_investigation(request: InvestigationRequest, db: Session = Depends
     operational_events = [a for a in alerts_dicts if a.get("tactic") == "Unknown"]
     
     # Correlate (this will filter out Unknown tactics)
-    graph_data = correlate_alerts(alerts_dicts)
+    graph_data = GraphBuilder.build_graph(alerts_dicts)
     
     # Add metadata about filtered events
     if operational_events:
@@ -455,7 +486,7 @@ def append_alerts_to_investigation(investigation_id: str, request: AppendAlertsR
     alerts_dicts = [Alert.model_validate(a).model_dump() for a in all_alerts]
     
     # Update Graph and IDs
-    investigation.graph = correlate_alerts(alerts_dicts)
+    investigation.graph = GraphBuilder.build_graph(alerts_dicts)
     investigation.alert_ids = updated_ids
     
     # JSON columns often require explicit "flag_modified" in some ORMs, 
@@ -590,68 +621,93 @@ def get_investigation_summary(investigation_id: str, db: Session = Depends(get_d
         })
     
     # Generate intelligent narrative
+    summary_text = ""
+    impact_text = ""
+    mitigation_text = ""
+    mitre_info = []
+
     if len(security_alerts) > 0:
         tactics = [a.get("tactic") for a in security_alerts if a.get("tactic")]
         
-        # Sort unique tactics by MITRE kill chain order (not appearance order)
-        TACTIC_ORDER = [
-            "Initial Access",
-            "Execution", 
-            "Persistence",
-            "Privilege Escalation",
-            "Defense Evasion",
-            "Credential Access",
-            "Discovery",
-            "Lateral Movement",
-            "Collection",
-            "Exfiltration",
-            "Impact",
-            "Command and Control"
-        ]
+        # Get unique tactics preserving chronological order (adjacent deduplication)
+        narrative_tactics = []
+        last_tactic = None
         
-        # Get unique tactics preserving kill chain order
-        seen_tactics = set()
-        unique_tactics = []
-        for tactic_order in TACTIC_ORDER:
-            for tactic in tactics:
-                # Handle multi-tactic alerts like "Persistence, Privilege Escalation"
-                tactic_parts = [t.strip() for t in tactic.split(',')]
-                if tactic_order in tactic_parts and tactic_order not in seen_tactics:
-                    unique_tactics.append(tactic_order)
-                    seen_tactics.add(tactic_order)
+        for alert in security_alerts:
+            tactic = alert.get("tactic")
+            technique = alert.get("technique")
+            if not tactic: continue
+            
+            # Populate MITRE Info
+            if tactic and tactic != "Unknown":
+                mitre_info.append({
+                    "tactic": tactic,
+                    "technique": technique or "Unknown Technique"
+                })
+
+            current_tactics_in_alert = [t.strip() for t in tactic.split(',')]
+            
+            for t in current_tactics_in_alert:
+                if t != last_tactic:
+                    narrative_tactics.append(t)
+                    last_tactic = t
+
+        # Build Summary
+        summary_text = f"This alert triggers when correlated activity indicates a potential {len(security_alerts)}-stage attack sequence. "
         
-        narrative = f"This investigation tracks a {len(security_alerts)}-stage attack progression. "
-        narrative += f"The attack chain covers: {' → '.join(unique_tactics)}. "
+        # Add chain description
+        chain_str = ' -> '.join(narrative_tactics)
+        summary_text += f"The observed attack chain covers: {chain_str}. "
         
-        # Add context based on first and last tactic
-        if len(unique_tactics) > 0:
-            first_tactic = unique_tactics[0]
-            last_tactic = unique_tactics[-1]
+        if len(narrative_tactics) > 0:
+            first_tactic = narrative_tactics[0]
+            summary_text += f"The sequence begins with {first_tactic}, suggesting an initial foothold or reconnaissance effort. "
             
-            narrative += f"Beginning with {first_tactic}, the adversary "
-            if "Persistence" in unique_tactics:
-                narrative += "established persistence, "
-            if "Defense Evasion" in unique_tactics:
-                narrative += "evaded defenses, "
-            if "Credential Access" in unique_tactics:
-                narrative += "accessed credentials, "
-            if "Exfiltration" in unique_tactics:
-                narrative += "exfiltrated data, "
+            # Add specific behaviors based on tactics
+            behaviors = []
+            if "Discovery" in narrative_tactics:
+                behaviors.append("internal reconnaissance (Discovery)")
+            if "Lateral Movement" in narrative_tactics:
+                behaviors.append("movement between systems (Lateral Movement)")
+            if "Collection" in narrative_tactics:
+                behaviors.append("data gathering (Collection)")
+            if "Exfiltration" in narrative_tactics:
+                behaviors.append("data theft (Exfiltration)")
             
-            narrative += f"culminating in {last_tactic}. "
-            
-            # Add severity context
-            critical_count = sum(1 for a in security_alerts if a.get("severity") == "Critical")
-            high_count = sum(1 for a in security_alerts if a.get("severity") == "High")
-            
-            if critical_count > 0:
-                narrative += f"This is a CRITICAL incident with {critical_count} critical-severity events requiring immediate response."
-            elif high_count > 0:
-                narrative += f"This high-severity incident requires prompt investigation and remediation."
+            if behaviors:
+                summary_text += f"Correlated events indicate behavior consistent with {', '.join(behaviors)}. "
+
+        # Build Impact
+        impact_paragraphs = []
+        unique_tactics_set = set(narrative_tactics)
+        for tactic in unique_tactics_set:
+            tactic_info = TACTIC_INFO.get(tactic)
+            if tactic_info and tactic_info.get("impact"):
+                impact_paragraphs.append(tactic_info["impact"])
+        
+        if impact_paragraphs:
+            impact_text = " ".join(impact_paragraphs)
+        else:
+            impact_text = "The impact of this activity depends on the sensitivity of the affected systems and data."
+
+        # Build Mitigation (Contextual Paragraph)
+        mitigation_paragraphs = []
+        for tactic in unique_tactics_set:
+            tactic_info = TACTIC_INFO.get(tactic)
+            if tactic_info and tactic_info.get("mitigation"):
+                mitigation_paragraphs.append(tactic_info["mitigation"])
+        
+        if mitigation_paragraphs:
+            mitigation_text = " ".join(mitigation_paragraphs)
+        else:
+            mitigation_text = "Investigate the source of the activity and applying standard incident response procedures."
+
     else:
-        narrative = "Investigation contains operational events only. No security-critical attack progression detected."
+        summary_text = "Investigation contains operational events only. No security-critical attack progression detected."
+        impact_text = "Low security impact. Operational checks recommended."
+        mitigation_text = "Review operational procedures."
     
-    # Generate context-aware remediation steps
+    # Generate context-aware remediation steps (List format for checklist)
     remediation_steps = []
     
     if len(security_alerts) > 0:
@@ -659,39 +715,39 @@ def get_investigation_summary(investigation_id: str, db: Session = Depends(get_d
         
         # Initial Access remediation
         if "Initial Access" in tactics_involved:
-            remediation_steps.append("1. Isolate compromised account - Force password reset and revoke active sessions")
-            remediation_steps.append("2. Enable MFA if not already enforced across all user accounts")
+            remediation_steps.append("Isolate compromised account - Force password reset and revoke active sessions")
+            remediation_steps.append("Enable MFA if not already enforced across all user accounts")
         
         # Persistence remediation
         if "Persistence" in tactics_involved or "Privilege Escalation" in tactics_involved:
-            remediation_steps.append("3. Audit and remove unauthorized IAM access keys, roles, and policies")
-            remediation_steps.append("4. Review CloudTrail logs for all actions taken by compromised credentials")
+            remediation_steps.append("Audit and remove unauthorized IAM access keys, roles, and policies")
+            remediation_steps.append("Review CloudTrail logs for all actions taken by compromised credentials")
         
         # Defense Evasion remediation
         if "Defense Evasion" in tactics_involved:
-            remediation_steps.append("5. Re-enable CloudTrail logging and enable log file validation")
-            remediation_steps.append("6. Configure AWS Config for continuous compliance monitoring")
+            remediation_steps.append("Re-enable CloudTrail logging and enable log file validation")
+            remediation_steps.append("Configure AWS Config for continuous compliance monitoring")
         
         # Credential Access remediation
         if "Credential Access" in tactics_involved:
-            remediation_steps.append("7. Rotate all exposed secrets in AWS Secrets Manager and Parameter Store")
-            remediation_steps.append("8. Enable secret rotation policies for automatic credential rotation")
+            remediation_steps.append("Rotate all exposed secrets in AWS Secrets Manager and Parameter Store")
+            remediation_steps.append("Enable secret rotation policies for automatic credential rotation")
         
         # Exfiltration remediation
         if "Exfiltration" in tactics_involved:
-            remediation_steps.append("9. Delete unauthorized EBS snapshots and review sharing permissions")
-            remediation_steps.append("10. Enable VPC Flow Logs and analyze for data exfiltration patterns")
+            remediation_steps.append("Delete unauthorized EBS snapshots and review sharing permissions")
+            remediation_steps.append("Enable VPC Flow Logs and analyze for data exfiltration patterns")
         
         # Impact remediation
         if "Impact" in tactics_involved:
-            remediation_steps.append("11. Attempt data recovery from backups and enable versioning on S3 buckets")
-            remediation_steps.append("12. Enable MFA Delete on critical data stores to prevent future loss")
-            remediation_steps.append("13. Investigate for ransomware indicators and IOCs across environment")
+            remediation_steps.append("Attempt data recovery from backups and enable versioning on S3 buckets")
+            remediation_steps.append("Enable MFA Delete on critical data stores to prevent future loss")
+            remediation_steps.append("Investigate for ransomware indicators and IOCs across environment")
         
         # General cloud security hardening
-        remediation_steps.append("14. Implement least-privilege IAM policies using AWS IAM Access Analyzer")
-        remediation_steps.append("15. Enable AWS GuardDuty for continuous threat detection")
-        remediation_steps.append("16. Configure CloudWatch alarms for suspicious API activity")
+        remediation_steps.append("Implement least-privilege IAM policies using AWS IAM Access Analyzer")
+        remediation_steps.append("Enable AWS GuardDuty for continuous threat detection")
+        remediation_steps.append("Configure CloudWatch alarms for suspicious API activity")
     
     # Metrics
     severity_breakdown = {}
@@ -699,10 +755,16 @@ def get_investigation_summary(investigation_id: str, db: Session = Depends(get_d
         sev = alert.get("severity", "Unknown")
         severity_breakdown[sev] = severity_breakdown.get(sev, 0) + 1
     
-    tactics_involved = list(set([a.get("tactic") for a in security_alerts if a.get("tactic")]))
+    tactics_involved_list = list(set([a.get("tactic") for a in security_alerts if a.get("tactic")]))
     
     return {
-        "narrative": narrative,
+        "correlation_analysis": {
+            "summary": summary_text,
+            "impact": impact_text,
+            "mitigation": mitigation_text,
+            "mitre_technique": mitre_info
+        },
+        "narrative": summary_text, # Backward compatibility if needed, though we will use correlation_analysis in frontend
         "timeline": timeline,
         "remediation_steps": remediation_steps,
         "metrics": {
@@ -710,6 +772,6 @@ def get_investigation_summary(investigation_id: str, db: Session = Depends(get_d
             "security_alerts": len(security_alerts),
             "operational_alerts": len(sorted_alerts) - len(security_alerts),
             "severity_breakdown": severity_breakdown,
-            "tactics_involved": tactics_involved
+            "tactics_involved": tactics_involved_list
         }
     }
