@@ -524,30 +524,38 @@ def append_alerts_to_investigation(investigation_id: str, request: AppendAlertsR
     return investigation
 
 @app.get("/investigations/{investigation_id}/summary")
-def get_investigation_summary(investigation_id: str, db: Session = Depends(get_db)):
+def get_investigation_summary(investigation_id: str, repo: AlertRepository = Depends(get_repository)):
     """
     Enhanced investigation summary with timeline and context-aware remediation
     """
-    investigation = db.query(models.InvestigationModel).filter(models.InvestigationModel.id == investigation_id).first()
+    investigation = repo.get_investigation_by_id(investigation_id)
     if not investigation:
         raise HTTPException(status_code=404, detail="Investigation not found")
 
     # Get all alerts involved
-    alert_ids = investigation.alert_ids
-    alerts = db.query(models.AlertModel).filter(models.AlertModel.id.in_(alert_ids)).all()
+    alert_ids = investigation.alert_ids or []
+    alerts = repo.get_alerts_by_ids(alert_ids)
     
     # Convert to dicts for easier manipulation
     alert_dicts = []
     for alert in alerts:
+        # helper to safely get attr or key
+        def get_attr(obj, attr, default=None):
+            if isinstance(obj, dict): return obj.get(attr, default)
+            return getattr(obj, attr, default)
+        
+        # Get raw data properly
+        raw_data = get_attr(alert, "raw_data") or {}
+
         alert_dict = {
-            "id": alert.id,
-            "name": alert.name,
-            "severity": alert.severity,
-            "tactic": alert.tactic,
-            "technique": alert.technique,
-            "description": alert.description,
-            "created_at": alert.created_at,
-            "raw_data": alert.raw_data or {}
+            "id": get_attr(alert, "id"),
+            "name": get_attr(alert, "name"),
+            "severity": get_attr(alert, "severity"),
+            "tactic": get_attr(alert, "tactic"),
+            "technique": get_attr(alert, "technique"),
+            "description": get_attr(alert, "description"),
+            "created_at": get_attr(alert, "created_at"),
+            "raw_data": raw_data
         }
         alert_dicts.append(alert_dict)
     
