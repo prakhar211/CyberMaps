@@ -27,8 +27,9 @@ app = FastAPI(title="AI Attack Path Predictor", version="1.0.0")
 
 # CORS setup
 origins = [
-    "http://localhost:5173", # Vite default
+    "http://localhost:5173",
     "http://localhost:3000",
+    "*"  # Allow all for Vercel/Playground access
 ]
 
 app.add_middleware(
