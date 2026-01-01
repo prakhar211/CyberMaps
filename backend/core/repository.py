@@ -132,15 +132,23 @@ class SqliteAlertRepository(AlertRepository):
             self.db.refresh(inv)
         return inv
 
+# Global store for in-memory data, keyed by session_id
+# Structure: { session_id: { "alerts": [], "investigations": [] } }
+GLOBAL_STORE = {}
+
 class InMemoryAlertRepository(AlertRepository):
-    def __init__(self):
-        # In a real per-request scenario, this might need to be context-var based or session-based.
-        # For now, it's a global in-memory store for the application instance (shared by all users if singleton).
-        # CAUTION: This means shared state for the 'Playground' if valid for all users.
-        # To make it truly per-session, we'd need dependency injection with session handling.
-        # For the prototype roadmap, we proceed with simple list, but note the limitation.
-        self._alerts = []
-        self._investigations = []
+    def __init__(self, session_id: str = "default"):
+        self.session_id = session_id
+        if self.session_id not in GLOBAL_STORE:
+            GLOBAL_STORE[self.session_id] = {"alerts": [], "investigations": []}
+            
+    @property
+    def alerts(self):
+        return GLOBAL_STORE[self.session_id]["alerts"]
+        
+    @property
+    def investigations(self):
+        return GLOBAL_STORE[self.session_id]["investigations"]
 
     def create_alert(self, alert_data: Dict[str, Any]) -> Any:
         # Simulate an object with attribute access to mimic ORM model
@@ -158,22 +166,22 @@ class InMemoryAlertRepository(AlertRepository):
             raw_data=alert_data.get("raw_data"),
             created_at=datetime.utcnow()
         )
-        self._alerts.append(alert_obj)
+        self.alerts.append(alert_obj)
         return alert_obj
 
     def get_alerts(self, time_filter: Optional[str] = None) -> List[Any]:
         # Simple implementation ignoring efficient time filtering for now
         # Just return sorted list
-        return sorted(self._alerts, key=lambda x: x.created_at, reverse=True)
+        return sorted(self.alerts, key=lambda x: x.created_at, reverse=True)
 
     def get_alert_by_id(self, alert_id: str) -> Optional[Any]:
-        for a in self._alerts:
+        for a in self.alerts:
             if a.id == alert_id:
                 return a
         return None
         
     def get_alerts_by_ids(self, alert_ids: List[str]) -> List[Any]:
-        return [a for a in self._alerts if a.id in alert_ids]
+        return [a for a in self.alerts if a.id in alert_ids]
 
     def create_investigation(self, data: Dict[str, Any]) -> Any:
         class MockInvestigation:
@@ -187,20 +195,23 @@ class InMemoryAlertRepository(AlertRepository):
             alert_ids=data["alert_ids"],
             graph=data["graph"]
         )
-        self._investigations.append(new_inv)
+        self.investigations.append(new_inv)
         return new_inv
 
     def get_investigations(self) -> List[Any]:
-        return self._investigations
+        return self.investigations
 
     def get_investigation_by_id(self, inv_id: str) -> Optional[Any]:
-        for inv in self._investigations:
+        for inv in self.investigations:
             if inv.id == inv_id:
                 return inv
         return None
 
     def delete_investigation(self, inv_id: str) -> None:
-        self._investigations = [i for i in self._investigations if i.id != inv_id]
+        # Filter existing list in-place assignment logic effectively
+        current_invs = self.investigations
+        updated_invs = [i for i in current_invs if i.id != inv_id]
+        GLOBAL_STORE[self.session_id]["investigations"] = updated_invs
 
     def update_investigation(self, inv_id: str, alert_ids: Optional[List[str]] = None, graph: Optional[Dict[str, Any]] = None) -> Optional[Any]:
         inv = self.get_investigation_by_id(inv_id)

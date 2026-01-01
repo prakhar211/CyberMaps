@@ -32,6 +32,26 @@ import { collectPastIOCs, generatePredictionData } from './utils/iocCollector';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+// --- Session Handling for Isolation ---
+// Generate a unique Session ID if it doesn't exist to isolate Playground users
+const getSessionId = () => {
+  let sessionId = sessionStorage.getItem('cybermaps_session_id');
+  if (!sessionId) {
+    // Simple random ID generation (UUID-like)
+    sessionId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+    sessionStorage.setItem('cybermaps_session_id', sessionId);
+  }
+  return sessionId;
+};
+const SESSION_ID = getSessionId();
+// Set global Axios header
+axios.defaults.headers.common['X-Session-ID'] = SESSION_ID;
+console.log("Initialized Session:", SESSION_ID);
+// --------------------------------------
+
 // Custom Node Types
 const nodeTypes = {
   activeDirectory: DeviceNode, // Map to existing generic node for now, or create specific
