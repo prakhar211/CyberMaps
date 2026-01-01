@@ -2,9 +2,8 @@ services:
   - type: web
     name: cybermaps-backend
     env: python
-    rootDirectory: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    buildCommand: cd backend && pip install -r requirements.txt
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: CYBERMAPS_MODE
         value: playground
