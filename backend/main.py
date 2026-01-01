@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
@@ -35,9 +36,10 @@ origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
-    allow_credentials=True,
+    allow_credentials=False, # Use False when using allow_origins=["*"] for clarity and wide browser compatibility
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Session-ID"] # Ensure custom session header is visible to client
 )
 
 # Register routers
@@ -418,7 +420,14 @@ def get_tactics():
 
 @app.get("/")
 def read_root():
-    return {"status": "active", "message": "CyberMaps AI Backend is running with SQLite Persistence"}
+    mode = os.getenv("CYBERMAPS_MODE", "local")
+    storage = "InMemory (Scoped)" if mode.lower() == "playground" else "SQLite Persistence"
+    return {
+        "status": "active", 
+        "mode": mode,
+        "storage": storage,
+        "message": f"CyberMaps AI Backend is running in {mode} mode with {storage}"
+    }
 
 @app.get("/health")
 def health_check():
