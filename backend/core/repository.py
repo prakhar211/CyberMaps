@@ -221,3 +221,153 @@ class InMemoryAlertRepository(AlertRepository):
             if graph is not None:
                 inv.graph = graph
         return inv
+
+
+# --- Redis-backed Repository for Production Playground ---
+
+class RedisAlertRepository(AlertRepository):
+    """
+    Redis-backed repository for session-scoped storage.
+    Solves multi-worker isolation by using shared Redis instance.
+    """
+    
+    def __init__(self, redis_client, session_id: str = "default"):
+        self.redis = redis_client
+        self.session_id = session_id
+        self.alerts_key = f"cybermaps:{session_id}:alerts"
+        self.investigations_key = f"cybermaps:{session_id}:investigations"
+        # Set TTL for session data (24 hours)
+        self.ttl = 86400
+    
+    def _serialize(self, obj: Any) -> str:
+        """Serialize object to JSON string."""
+        import json
+        if hasattr(obj, '__dict__'):
+            data = {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+            # Handle datetime
+            if 'created_at' in data and hasattr(data['created_at'], 'isoformat'):
+                data['created_at'] = data['created_at'].isoformat()
+            return json.dumps(data)
+        return json.dumps(obj)
+    
+    def _deserialize_alert(self, json_str: str) -> Any:
+        """Deserialize JSON to alert-like object."""
+        import json
+        from datetime import datetime as dt
+        
+        class RedisAlert:
+            def __init__(self, **entries):
+                self.__dict__.update(entries)
+        
+        data = json.loads(json_str)
+        # Parse datetime
+        if 'created_at' in data and data['created_at']:
+            try:
+                data['created_at'] = dt.fromisoformat(data['created_at'])
+            except:
+                data['created_at'] = dt.utcnow()
+        return RedisAlert(**data)
+    
+    def _deserialize_investigation(self, json_str: str) -> Any:
+        """Deserialize JSON to investigation-like object."""
+        import json
+        from datetime import datetime as dt
+        
+        class RedisInvestigation:
+            def __init__(self, **entries):
+                self.__dict__.update(entries)
+        
+        data = json.loads(json_str)
+        if 'created_at' in data and data['created_at']:
+            try:
+                data['created_at'] = dt.fromisoformat(data['created_at'])
+            except:
+                data['created_at'] = dt.utcnow()
+        return RedisInvestigation(**data)
+
+    def create_alert(self, alert_data: Dict[str, Any]) -> Any:
+        alert_id = alert_data.get("id") or str(uuid.uuid4())
+        
+        class RedisAlert:
+            def __init__(self, **entries):
+                self.__dict__.update(entries)
+        
+        alert_obj = RedisAlert(
+            id=alert_id,
+            name=alert_data["name"],
+            severity=alert_data["severity"],
+            tactic=alert_data["tactic"],
+            technique=alert_data.get("technique"),
+            description=alert_data.get("description"),
+            raw_data=alert_data.get("raw_data"),
+            created_at=datetime.utcnow()
+        )
+        
+        # Store in Redis hash
+        self.redis.hset(self.alerts_key, alert_id, self._serialize(alert_obj))
+        self.redis.expire(self.alerts_key, self.ttl)
+        return alert_obj
+
+    def get_alerts(self, time_filter: Optional[str] = None) -> List[Any]:
+        all_alerts_raw = self.redis.hvals(self.alerts_key)
+        alerts = [self._deserialize_alert(a) for a in all_alerts_raw]
+        # Sort by created_at descending
+        return sorted(alerts, key=lambda x: x.created_at if x.created_at else datetime.min, reverse=True)
+
+    def get_alert_by_id(self, alert_id: str) -> Optional[Any]:
+        raw = self.redis.hget(self.alerts_key, alert_id)
+        if raw:
+            return self._deserialize_alert(raw)
+        return None
+        
+    def get_alerts_by_ids(self, alert_ids: List[str]) -> List[Any]:
+        results = []
+        for aid in alert_ids:
+            raw = self.redis.hget(self.alerts_key, aid)
+            if raw:
+                results.append(self._deserialize_alert(raw))
+        return results
+
+    def create_investigation(self, data: Dict[str, Any]) -> Any:
+        inv_id = data.get("id") or str(uuid.uuid4())
+        
+        class RedisInvestigation:
+            def __init__(self, **entries):
+                self.__dict__.update(entries)
+        
+        new_inv = RedisInvestigation(
+            id=inv_id,
+            name=data["name"],
+            created_at=datetime.utcnow(),
+            alert_ids=data["alert_ids"],
+            graph=data["graph"]
+        )
+        
+        self.redis.hset(self.investigations_key, inv_id, self._serialize(new_inv))
+        self.redis.expire(self.investigations_key, self.ttl)
+        return new_inv
+
+    def get_investigations(self) -> List[Any]:
+        all_inv_raw = self.redis.hvals(self.investigations_key)
+        return [self._deserialize_investigation(i) for i in all_inv_raw]
+
+    def get_investigation_by_id(self, inv_id: str) -> Optional[Any]:
+        raw = self.redis.hget(self.investigations_key, inv_id)
+        if raw:
+            return self._deserialize_investigation(raw)
+        return None
+
+    def delete_investigation(self, inv_id: str) -> None:
+        self.redis.hdel(self.investigations_key, inv_id)
+
+    def update_investigation(self, inv_id: str, alert_ids: Optional[List[str]] = None, graph: Optional[Dict[str, Any]] = None) -> Optional[Any]:
+        inv = self.get_investigation_by_id(inv_id)
+        if inv:
+            if alert_ids is not None:
+                inv.alert_ids = alert_ids
+            if graph is not None:
+                inv.graph = graph
+            # Re-save
+            self.redis.hset(self.investigations_key, inv_id, self._serialize(inv))
+            self.redis.expire(self.investigations_key, self.ttl)
+        return inv

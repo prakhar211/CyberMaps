@@ -9,3 +9,13 @@ services:
         value: playground
       - key: GOOGLE_API_KEY
         sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: cybermaps-redis
+          property: connectionString
+
+  - type: redis
+    name: cybermaps-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
