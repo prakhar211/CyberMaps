@@ -1,5 +1,5 @@
 from typing import Generator, Optional
-from fastapi import Depends, Header
+from fastapi import Depends, Header, Request
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from core.repository import AlertRepository, SqliteAlertRepository, InMemoryAlertRepository, RedisAlertRepository
@@ -31,8 +31,6 @@ def get_redis_client():
 
 def get_db() -> Generator:
     # If in playground mode, we might not need DB, but existing dependencies might expect it.
-    # We yield a dummy or still yield session if we want mixed usage.
-    # For now, keep as is.
     db = SessionLocal()
     try:
         yield db
@@ -40,14 +38,35 @@ def get_db() -> Generator:
         db.close()
 
 def get_repository(
+    request: Request,  # Add Request to extract headers manually
     db: Session = Depends(get_db),
     x_session_id: str = Header(default=None, alias="X-Session-ID"),
     session_id: Optional[str] = None # Support for query param fallback
 ) -> AlertRepository:
     mode = os.getenv("CYBERMAPS_MODE", "local")
     
-    # Priority: Header > Query Param > "default"
-    effective_session_id = x_session_id or session_id or "default"
+    # Debug: Log all headers to see what's coming through
+    # print(f"DEBUG: Raw headers: {dict(request.headers)}")
+    
+    # Try multiple ways to get the session ID
+    # 1. FastAPI Header() dependency
+    # 2. Manual extraction from request (handles case variations)
+    # 3. Query param fallback
+    # 4. Default
+    
+    effective_session_id = x_session_id
+    
+    if not effective_session_id:
+        # Try manual extraction with different case variations
+        effective_session_id = request.headers.get("x-session-id") or \
+                               request.headers.get("X-Session-ID") or \
+                               request.headers.get("X-Session-Id")
+    
+    if not effective_session_id:
+        effective_session_id = session_id  # query param
+    
+    if not effective_session_id:
+        effective_session_id = "default"
     
     print(f"DEBUG: deps.py - Mode: {mode}, Session ID: {effective_session_id}")
     
