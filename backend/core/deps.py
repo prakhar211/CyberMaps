@@ -1,9 +1,10 @@
+import os
+import uuid
 from typing import Generator, Optional
 from fastapi import Depends, Header, Request
 from sqlalchemy.orm import Session
 from database import SessionLocal
 from core.repository import AlertRepository, SqliteAlertRepository, InMemoryAlertRepository, RedisAlertRepository
-import os
 
 # Redis client singleton (lazy initialized)
 _redis_client = None
@@ -30,7 +31,6 @@ def get_redis_client():
     return _redis_client
 
 def get_db() -> Generator:
-    # If in playground mode, we might not need DB, but existing dependencies might expect it.
     db = SessionLocal()
     try:
         yield db
@@ -38,47 +38,46 @@ def get_db() -> Generator:
         db.close()
 
 def get_repository(
-    request: Request,  # Add Request to extract headers manually
+    request: Request,
     db: Session = Depends(get_db),
-    x_session_id: str = Header(default=None, alias="X-Session-ID"),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
     session_id: Optional[str] = None # Support for query param fallback
 ) -> AlertRepository:
     mode = os.getenv("CYBERMAPS_MODE", "local")
     
-    # Debug: Log all headers to see what's coming through
-    # print(f"DEBUG: Raw headers: {dict(request.headers)}")
+    # Debug: Log header keys to see what the proxy is doing
+    header_keys = [k.lower() for k in request.headers.keys()]
     
-    # Try multiple ways to get the session ID
-    # 1. FastAPI Header() dependency
-    # 2. Manual extraction from request (handles case variations)
-    # 3. Query param fallback
-    # 4. Default
+    # Determine the effective session ID
+    # 1. Check query parameter first (most reliable as it's never stripped by proxies)
+    # 2. Check X-Session-ID header (FastAPI auto-extraction)
+    # 3. Check raw headers (manual case-insensitive search)
+    # 4. Fallback to "default"
     
-    effective_session_id = x_session_id
+    effective_session_id = session_id
     
     if not effective_session_id:
-        # Try manual extraction with different case variations
+        effective_session_id = x_session_id
+        
+    if not effective_session_id:
+        # Manual search in headers
         effective_session_id = request.headers.get("x-session-id") or \
                                request.headers.get("X-Session-ID") or \
                                request.headers.get("X-Session-Id")
-    
-    if not effective_session_id:
-        effective_session_id = session_id  # query param
-    
+                               
     if not effective_session_id:
         effective_session_id = "default"
     
-    print(f"DEBUG: deps.py - Mode: {mode}, Session ID: {effective_session_id}")
+    # Extra logging to catch the "default" case
+    if effective_session_id == "default" and mode.lower() == "playground":
+        print(f"DEBUG: Session ID is 'default'. Available header keys: {header_keys}")
+    else:
+        print(f"DEBUG: deps.py - Mode: {mode}, Session ID: {effective_session_id}")
     
     if mode.lower() == "playground":
-        # Try Redis first (for production multi-worker environments)
         redis_client = get_redis_client()
         if redis_client:
-            print(f"DEBUG: Using RedisAlertRepository")
             return RedisAlertRepository(redis_client, session_id=effective_session_id)
-        
-        # Fall back to InMemory (works for single-worker or local dev)
-        print(f"DEBUG: Using InMemoryAlertRepository (no Redis)")
         return InMemoryAlertRepository(session_id=effective_session_id)
     
     return SqliteAlertRepository(db)

@@ -49,6 +49,15 @@ const getSessionId = () => {
 const SESSION_ID = getSessionId();
 // Set global Axios header
 axios.defaults.headers.common['X-Session-ID'] = SESSION_ID;
+
+// Add an interceptor to automatically add session_id query param to every request
+// This is a fail-safe in case custom headers are stripped by proxies (Render/Cloudflare)
+axios.interceptors.request.use((config) => {
+  config.params = config.params || {};
+  config.params['session_id'] = SESSION_ID;
+  return config;
+});
+
 console.log("Initialized Session:", SESSION_ID);
 // --------------------------------------
 
