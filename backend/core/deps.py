@@ -56,6 +56,9 @@ def get_repository(
     
     effective_session_id = session_id
     
+    # Debug: Log all headers to see what's coming through
+    print(f"DEBUG: deps.py - Raw headers: {dict(request.headers)}")
+    
     if not effective_session_id:
         effective_session_id = x_session_id
         

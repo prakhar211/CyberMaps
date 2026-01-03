@@ -419,14 +419,27 @@ def get_tactics():
     return TACTICS
 
 @app.get("/")
-def read_root():
+def read_root(
+    request: Request,
+    repo: AlertRepository = Depends(get_repository)
+):
     mode = os.getenv("CYBERMAPS_MODE", "local")
-    storage = "InMemory (Scoped)" if mode.lower() == "playground" else "SQLite Persistence"
+    storage = "Sqlite (Global)"
+    session_id = "N/A (Global Mode)"
+    
+    if hasattr(repo, 'session_id'):
+        session_id = repo.session_id
+        if "Redis" in type(repo).__name__:
+            storage = f"Redis (Scoped: {session_id})"
+        else:
+            storage = f"InMemory (Scoped: {session_id})"
+            
     return {
-        "status": "active", 
+        "status": "CyberMaps API is running",
         "mode": mode,
         "storage": storage,
-        "message": f"CyberMaps AI Backend is running in {mode} mode with {storage}"
+        "detected_session_id": session_id,
+        "raw_headers": dict(request.headers)
     }
 
 @app.get("/health")
