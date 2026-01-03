@@ -242,13 +242,21 @@ class RedisAlertRepository(AlertRepository):
     def _serialize(self, obj: Any) -> str:
         """Serialize object to JSON string."""
         import json
+        from datetime import datetime, date
+        import uuid
+
+        def json_serial(o):
+            """JSON serializer for objects not serializable by default json code"""
+            if isinstance(o, (datetime, date)):
+                return o.isoformat()
+            if isinstance(o, uuid.UUID):
+                return str(o)
+            raise TypeError(f"Type {type(o)} not serializable")
+
         if hasattr(obj, '__dict__'):
             data = {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
-            # Handle datetime
-            if 'created_at' in data and hasattr(data['created_at'], 'isoformat'):
-                data['created_at'] = data['created_at'].isoformat()
-            return json.dumps(data)
-        return json.dumps(obj)
+            return json.dumps(data, default=json_serial)
+        return json.dumps(obj, default=json_serial)
     
     def _deserialize_alert(self, json_str: str) -> Any:
         """Deserialize JSON to alert-like object."""
