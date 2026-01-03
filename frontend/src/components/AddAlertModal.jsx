@@ -35,7 +35,7 @@ function AddAlertModal({ onClose, onAlertAdded }) {
 
                 try {
                     rawDataJson = JSON.parse(formData.raw_data_str);
-                } catch (e) {
+                } catch {
                     alert("Invalid JSON in Raw Logs field. Please correct it.");
                     setLoading(false);
                     return;

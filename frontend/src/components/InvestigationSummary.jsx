@@ -1,9 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import { X, ShieldAlert, AlertTriangle, CheckCircle, Activity, ChevronRight, ChevronLeft, Clock, User, MapPin, Target, Maximize2, Minimize2 } from 'lucide-react';
 
 export default function InvestigationSummary({ summary, onClose }) {
-    const [isCollapsed, setIsCollapsed] = useState(false);
-    const [isFullWidth, setIsFullWidth] = useState(false);
+
 
     // Column widths for resizable timeline table
     const [columnWidths, setColumnWidths] = useState({

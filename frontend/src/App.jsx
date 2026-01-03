@@ -26,8 +26,6 @@ import axios from 'axios';
 import './index.css';
 import 'reactflow/dist/style.css';
 import './styles/KillChainHUD.css';
-import styles from './styles/CyberHUD.module.css';
-import { getLayoutedElements } from './utils/layout';
 import { collectPastIOCs, generatePredictionData } from './utils/iocCollector';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -107,7 +105,6 @@ function CyberMapsApp() {
   const [showInvestigationModal, setShowInvestigationModal] = useState(false);
   const [showAddToInvestigationModal, setShowAddToInvestigationModal] = useState(false);
   const [investigations, setInvestigations] = useState([]);
-  const [showNewInvModal, setShowNewInvModal] = useState(false); // Sidebar trigger
 
   // Delete Confirmation State
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -129,8 +126,7 @@ function CyberMapsApp() {
   const [isSummaryCollapsed, setIsSummaryCollapsed] = useState(false);
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
 
-  // V2 Theme Toggle (Cyber HUD)
-  const [useV2Theme, setUseV2Theme] = useState(false);
+
 
   // V2 Visualization Toggle (Kill Chain HUD)
   const [useV2Viz, setUseV2Viz] = useState(false);
@@ -816,7 +812,6 @@ function CyberMapsApp() {
 
 
             <div className="glass-panel" style={{ padding: '10px 20px', cursor: 'pointer' }} onClick={() => {
-              const selectedNodes = nodes.filter(n => n.selected);
               setNodes(nodes.filter(n => !n.selected));
               setEdges(edges.filter(e => !e.selected));
               setSelectedNode(null);
@@ -879,64 +874,68 @@ function CyberMapsApp() {
       </div>
 
       {/* Investigation Summary Drawer */}
-      {showInvestigationSummary && (
-        <div className={`summary-drawer ${isSummaryCollapsed ? 'collapsed' : ''}`} style={{
-          position: 'absolute',
-          top: '70px',
-          right: '20px',
-          width: isSummaryCollapsed ? '40px' : (isSummaryExpanded ? '900px' : '450px'),
-          maxHeight: 'calc(100vh - 100px)',
-          background: 'rgba(20, 20, 25, 0.95)',
-          backdropFilter: 'blur(20px)',
-          border: '1px solid var(--glass-border)',
-          borderRadius: '12px',
-          boxShadow: '0 10px 40px rgba(0,0,0,0.5)',
-          zIndex: 100, // Increased z-index
-          overflow: 'hidden',
-          transition: 'width 0.3s ease',
-          display: 'flex',
-          flexDirection: 'column'
-        }}>
-          <div style={{ padding: '10px', borderBottom: '1px solid var(--glass-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)' }}>
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              <button className="btn-ghost" onClick={() => setIsSummaryCollapsed(!isSummaryCollapsed)}>
-                {isSummaryCollapsed ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-              </button>
-              {!isSummaryCollapsed && <span style={{ marginLeft: 10, fontSize: '0.8rem', color: '#666', textTransform: 'uppercase', letterSpacing: '1px' }}>Investigation Report</span>}
-            </div>
+      {
+        showInvestigationSummary && (
+          <div className={`summary-drawer ${isSummaryCollapsed ? 'collapsed' : ''}`} style={{
+            position: 'absolute',
+            top: '70px',
+            right: '20px',
+            width: isSummaryCollapsed ? '40px' : (isSummaryExpanded ? '900px' : '450px'),
+            maxHeight: 'calc(100vh - 100px)',
+            background: 'rgba(20, 20, 25, 0.95)',
+            backdropFilter: 'blur(20px)',
+            border: '1px solid var(--glass-border)',
+            borderRadius: '12px',
+            boxShadow: '0 10px 40px rgba(0,0,0,0.5)',
+            zIndex: 100, // Increased z-index
+            overflow: 'hidden',
+            transition: 'width 0.3s ease',
+            display: 'flex',
+            flexDirection: 'column'
+          }}>
+            <div style={{ padding: '10px', borderBottom: '1px solid var(--glass-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)' }}>
+              <div style={{ display: 'flex', alignItems: 'center' }}>
+                <button className="btn-ghost" onClick={() => setIsSummaryCollapsed(!isSummaryCollapsed)}>
+                  {isSummaryCollapsed ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+                </button>
+                {!isSummaryCollapsed && <span style={{ marginLeft: 10, fontSize: '0.8rem', color: '#666', textTransform: 'uppercase', letterSpacing: '1px' }}>Investigation Report</span>}
+              </div>
 
-            {!isSummaryCollapsed && (
-              <button className="btn-ghost" onClick={() => setIsSummaryExpanded(!isSummaryExpanded)} title={isSummaryExpanded ? "Restore" : "Expand"}>
-                {isSummaryExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-              </button>
-            )}
-          </div>
-          {!isSummaryCollapsed && (
-            <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
-              {!investigationSummary ? (
-                <div style={{ color: '#aaa', fontStyle: 'italic', padding: '20px', textAlign: 'center' }}>
-                  Loading intelligence...
-                </div>
-              ) : investigationSummary.error ? (
-                <div style={{ color: '#ff0055', padding: '20px', textAlign: 'center' }}>
-                  {investigationSummary.message}
-                </div>
-              ) : (
-                <InvestigationSummary summary={investigationSummary} onClose={() => setShowInvestigationSummary(false)} />
+              {!isSummaryCollapsed && (
+                <button className="btn-ghost" onClick={() => setIsSummaryExpanded(!isSummaryExpanded)} title={isSummaryExpanded ? "Restore" : "Expand"}>
+                  {isSummaryExpanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
               )}
             </div>
-          )}
-        </div>
-      )}
+            {!isSummaryCollapsed && (
+              <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
+                {!investigationSummary ? (
+                  <div style={{ color: '#aaa', fontStyle: 'italic', padding: '20px', textAlign: 'center' }}>
+                    Loading intelligence...
+                  </div>
+                ) : investigationSummary.error ? (
+                  <div style={{ color: '#ff0055', padding: '20px', textAlign: 'center' }}>
+                    {investigationSummary.message}
+                  </div>
+                ) : (
+                  <InvestigationSummary summary={investigationSummary} onClose={() => setShowInvestigationSummary(false)} />
+                )}
+              </div>
+            )}
+          </div>
+        )
+      }
 
       {/* Node Details Panel */}
-      {selectedNode && !showPredictionDrawer && (
-        <NodeDetailsPanel
-          node={selectedNode}
-          tacticInfo={tacticInfo}
-          onClose={() => setSelectedNode(null)}
-        />
-      )}
+      {
+        selectedNode && !showPredictionDrawer && (
+          <NodeDetailsPanel
+            node={selectedNode}
+            tacticInfo={tacticInfo}
+            onClose={() => setSelectedNode(null)}
+          />
+        )
+      }
 
       {/* Prediction Drawer - High Z-Index Wrapper */}
       <div style={{ position: 'relative', zIndex: 9999 }}>
@@ -947,7 +946,7 @@ function CyberMapsApp() {
         />
       </div>
 
-    </div>
+    </div >
   );
 }
 
